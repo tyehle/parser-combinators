@@ -28,9 +28,8 @@ object SimpleParser extends RegexParsers {
     def isInt = kind == "int"
   }
 
-//  override val skipWhitespace = false
   private var currentReg = 'A' - 1
-  val registerAssignment = mutable.Map.empty[String, (Char, String)]
+  private val registerAssignment = mutable.Map.empty[String, (Char, String)]
   private def lookup(name: String):Option[(Char, String)] = {
     if(registerAssignment.contains(name)) Some(registerAssignment(name))
     else None
@@ -60,6 +59,7 @@ object SimpleParser extends RegexParsers {
     ( kind ~ variable ~ ( "=" ~> exp <~ ";" ) ) ^^? { case varKind ~ name ~ value =>
       lookup(name) match {
         case Some(reg) => Left(s"Variable $name is already defined")
+        case None if varKind != value.kind => Left(s"Expected $varKind, received ${value.kind}")
         case None => allocate(name, varKind) match {
           case Some(reg) => Right(s"${value.statements} s$reg\n")
           case None => Left("Too many variables")
