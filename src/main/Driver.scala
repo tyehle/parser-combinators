@@ -98,23 +98,24 @@ object SimpleParser extends RegexParsers {
     case elem => Left(s"Expected int, received ${elem.kind}")
   } | element
 
-  // element -> constant | variable | "(" exp ")"
-  def element = constant ^^ {Output(_, "int")} | variable ^^? {
-    name => lookup(name) match {
+  // element -> constant | string | variable | "(" exp ")"
+  def element =
+    constant ^^ {Output(_, "int")} | string ^^ {Output(_, "string")} |
+    variable ^^? { name => lookup(name) match {
       case Some((reg, kind)) => Right(Output(s"l$reg", kind))
       case None => Left(s"Undefined variable $name")
-    }
-  } | "(" ~> exp <~ ")"
+    }} | "(" ~> exp <~ ")"
 
 }
 
 object Driver {
   def main(args: Array[String]):Unit = {
     val example = "x = 12; y = 42; print x+y;"
-    SimpleParser.parseAll(SimpleParser.program, new InputStreamReader(System.in)) match {
-      case SimpleParser.Success(matched, reader) => println(matched)
-      case SimpleParser.Failure(msg, _) => println(s"FAILURE: $msg")
-      case SimpleParser.Error(msg, _) => println(s"ERROR: $msg")
+    val result = SimpleParser.parseAll(SimpleParser.program, new InputStreamReader(System.in)) match {
+      case SimpleParser.Success(matched, reader) => println(matched); 0
+      case SimpleParser.Failure(msg, _) => System.err.println(s"FAILURE: $msg"); 1
+      case SimpleParser.Error(msg, _) => System.err.println(s"ERROR: $msg"); 2
     }
+    System.exit(result)
   }
 }
