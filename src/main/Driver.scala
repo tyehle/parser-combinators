@@ -24,17 +24,21 @@ object SimpleParser extends RegexParsers {
     }
   }
 
+  case class Output(statements: String, kind: String) {
+    def isInt = kind == "int"
+  }
+
 //  override val skipWhitespace = false
   private var currentReg = 'A' - 1
-  val registerAssignment = mutable.Map.empty[String, Char]
-  private def getOrMake(name: String):Option[Char] = {
+  val registerAssignment = mutable.Map.empty[String, (Char, String)]
+  private def lookup(name: String):Option[(Char, String)] = {
     if(registerAssignment.contains(name)) Some(registerAssignment(name))
-    else allocate(name)
+    else None
   }
-  private def allocate(name: String):Option[Char] = {
+  private def allocate(name: String, kind: String):Option[Char] = {
     if(currentReg < 'B') {
       currentReg += 1
-      registerAssignment(name) = currentReg.toChar
+      registerAssignment(name) = (currentReg.toChar, kind)
       Some(currentReg.toChar)
     }
     else
@@ -44,39 +48,60 @@ object SimpleParser extends RegexParsers {
   def constant:Parser[String] = """\d+""".r ^^ { _.toString }
   def variable:Parser[String] = """[a-zA-Z]+""".r ^^ { _.toString }
   def string = ( "\"" ~> "[a-zA-Z0-9]*".r <~ "\"" ) ^^ { chars => "["+chars+"]"}
+  def kind = """int|string|boolean""".r ^^ { _.toString }
 
 
   // program -> statement *
   def program = rep(statement) ^^ { _.mkString }
 
-  // statement -> variable "=" exp ";" | "print" exp ";"
+  // statement -> type variable "=" exp ";" | variable "=" exp ";" | "print" exp ";"
   def statement =
-    ( variable ~ ( "=" ~> exp <~ ";" )) ^^? { case name ~ value =>
-      getOrMake(name) match {
-        case Some(reg) => Right(s"$value s$reg\n")
-        case None => Left("Too many variables")
+    ( kind ~ variable ~ ( "=" ~> exp <~ ";" ) ) ^^? { case varKind ~ name ~ value =>
+      lookup(name) match {
+        case Some(reg) => Left(s"Variable $name is already defined")
+        case None => allocate(name, varKind) match {
+          case Some(reg) => Right(s"${value.statements} s$reg\n")
+          case None => Left("Too many variables")
+        }
       }
-    } | ( "print" ~> exp <~ ";" ) ^^ { case value => s"$value n \n" }
+    } | ( variable ~ ("" ~> exp <~ ";") ) ^^? { case name ~ Output(value, expKind) =>
+      lookup(name) match {
+        case Some((reg, regKind)) if regKind == expKind => Right(s"$value s$reg\n")
+        case Some((reg, regKind)) => Left(s"Expected $regKind, received $expKind")
+        case None => Left(s"Unknown variable $variable")
+      }
+    } | ( "print" ~> exp <~ ";" ) ^^ { case Output(value, _) => s"$value n \n" }
 
   // exp -> term ("+" | "-") exp | term
-  def exp:Parser[String] = ( term ~ ("+" | "-") ~ exp ) ^^ {
-    case left ~ "+" ~ right => s"$left $right +"
-    case left ~ "-" ~ right => s"$left $right -"
+  def exp:Parser[Output] = ( term ~ ("+" | "-") ~ exp ) ^^? {
+    case left ~ "+" ~ right if left.isInt && right.isInt =>
+      Right(Output(s"${left.statements} ${right.statements} +", right.kind))
+    case left ~ "-" ~ right if left.isInt && right.isInt =>
+      Right(Output(s"${left.statements} ${right.statements} -", right.kind))
+    case left ~ _ ~ right =>
+      Left(s"Expected ints, received ${left.kind} and ${right.kind}")
   } | term
 
   // term -> factor ("*" | "/") term | factor
-  def term:Parser[String] = ( factor ~ ("*" | "/") ~ term ) ^^ {
-    case left ~ "*" ~ right => s"$left $right *"
-    case left ~ "/" ~ right => s"$left $right /"
+  def term:Parser[Output] = ( factor ~ ("*" | "/") ~ term ) ^^? {
+    case left ~ "*" ~ right if left.isInt && right.isInt =>
+      Right(Output(s"${left.statements} ${right.statements} *", right.kind))
+    case left ~ "/" ~ right if left.isInt && right.isInt =>
+      Right(Output(s"${left.statements} ${right.statements} /", right.kind))
+    case left ~ _ ~ right =>
+      Left(s"Expected ints, received ${left.kind} and ${right.kind}")
   } | factor
 
   // factor -> "-" element | element
-  def factor = ( "-" ~> element ) ^^ { elem => s"_$elem" } | element
+  def factor = ( "-" ~> element ) ^^? {
+    case elem if elem.isInt => Right(Output(s"_${elem.statements}", elem.kind))
+    case elem => Left(s"Expected int, received ${elem.kind}")
+  } | element
 
   // element -> constant | variable | "(" exp ")"
-  def element = constant | variable ^^? {
-    name => registerAssignment.get(name) match {
-      case Some(reg) => Right(s"l$reg")
+  def element = constant ^^ {Output(_, "int")} | variable ^^? {
+    name => lookup(name) match {
+      case Some((reg, kind)) => Right(Output(s"l$reg", kind))
       case None => Left(s"Undefined variable $name")
     }
   } | "(" ~> exp <~ ")"
