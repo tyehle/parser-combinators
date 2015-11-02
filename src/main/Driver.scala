@@ -25,7 +25,37 @@ object SimpleParser extends RegexParsers {
   }
 
   case class Output(statements: String, kind: String) {
-    def isInt = kind == "int"
+    def combine(other: Output, op: String): Option[Output] = {
+      op match {
+        case "+" | "-" | "*" | "/"  if other.kind == "int" && kind == "int" =>
+          Some(Output(s"$statements ${other.statements} $op", "int"))
+
+        case "<" | ">" | "==" if other.kind == "int" && kind == "int" =>
+          val outputOp:String = op.take(1)
+          Some(Output(genMacro(statements, other.statements, outputOp), "boolean"))
+
+        case "==" if other.kind == "boolean" && kind == "boolean" =>
+          Some(Output(genMacro(statements, other.statements, "="), "boolean"))
+
+        case _ => None
+      }
+    }
+
+    def convert(op: String): Option[Output] = op match {
+      case "-" if kind == "int" => Some(Output(s"$statements _1 *", "int"))
+
+      case "!" if kind == "boolean" => Some(Output(s"$statements 1 + 2 %", "boolean"))
+
+      case _ => None
+    }
+  }
+
+  def applicationKindError(op: String, args: Output*) = {
+    s"Can't apply $op to (${args.map(_.kind).mkString(", ")})"
+  }
+
+  def genMacro(a: String, b: String, op: String, tmpReg:String = "t") = {
+    s"$a 0 r $b [s$tmpReg 1] s$tmpReg $op$tmpReg"
   }
 
   private var currentReg = 'A' - 1
@@ -45,7 +75,7 @@ object SimpleParser extends RegexParsers {
   }
 
   def constant:Parser[String] = """\d+""".r ^^ { _.toString }
-  def boolConstant: Parser[String] = "true" ^^^ "[true]" | "false" ^^^ "[false]"
+  def boolConstant: Parser[String] = "true" ^^^ "1" | "false" ^^^ "0"
   def variable:Parser[String] = """[a-zA-Z]+""".r ^^ { _.toString }
   def string = ( "\"" ~> "[a-zA-Z0-9]*".r <~ "\"" ) ^^ { chars => "["+chars+"]"}
   def kind = """int|string|boolean""".r ^^ { _.toString }
@@ -71,32 +101,41 @@ object SimpleParser extends RegexParsers {
         case Some((reg, regKind)) => Left(s"Expected $regKind, received $expKind")
         case None => Left(s"Unknown variable $variable")
       }
-    } | ( "print" ~> exp <~ ";" ) ^^ { case Output(value, _) => s"$value n \n" } | ("newline" ~ ";") ^^^ "\n"
+    } | ( "print" ~> exp <~ ";" ) ^^ {
+      case Output(value, "boolean") => s"$value [false] r 1 [st [true]] st =t n\n"
+      case Output(value, _) => s"$value n \n"
+    } | ("newline" ~ ";") ^^^ "\n"
 
-  // exp -> term ("+" | "-") exp | term
-  def exp:Parser[Output] = ( term ~ ("+" | "-") ~ exp ) ^^? {
-    case left ~ "+" ~ right if left.isInt && right.isInt =>
-      Right(Output(s"${left.statements} ${right.statements} +", right.kind))
-    case left ~ "-" ~ right if left.isInt && right.isInt =>
-      Right(Output(s"${left.statements} ${right.statements} -", right.kind))
-    case left ~ _ ~ right =>
-      Left(s"Expected ints, received ${left.kind} and ${right.kind}")
+  // exp -> arithExp (">" | "<" | "==") exp | arithExp
+  def exp:Parser[Output] = ( arithExp ~ (">" | "<" | "==") ~ exp ) ^^? { case left ~ op ~ right =>
+    left.combine(right, op) match {
+      case Some(output) => Right(output)
+      case None => Left(applicationKindError(op, left, right))
+    }
+  } | arithExp
+
+  // arithExp -> term ("+" | "-") arithExp | term
+  def arithExp:Parser[Output] = ( term ~ ("+" | "-") ~ exp ) ^^? { case left ~ op ~ right =>
+    left.combine(right, op) match {
+      case Some(output) => Right(output)
+      case None => Left(applicationKindError(op, left, right))
+    }
   } | term
 
   // term -> factor ("*" | "/") term | factor
-  def term:Parser[Output] = ( factor ~ ("*" | "/") ~ term ) ^^? {
-    case left ~ "*" ~ right if left.isInt && right.isInt =>
-      Right(Output(s"${left.statements} ${right.statements} *", right.kind))
-    case left ~ "/" ~ right if left.isInt && right.isInt =>
-      Right(Output(s"${left.statements} ${right.statements} /", right.kind))
-    case left ~ _ ~ right =>
-      Left(s"Expected ints, received ${left.kind} and ${right.kind}")
+  def term:Parser[Output] = ( factor ~ ("*" | "/") ~ term ) ^^? { case left ~ op ~ right =>
+    left.combine(right, op) match {
+      case Some(output) => Right(output)
+      case None => Left(applicationKindError(op, left, right))
+    }
   } | factor
 
-  // factor -> "-" element | element
-  def factor = ( "-" ~> element ) ^^? {
-    case elem if elem.isInt => Right(Output(s"_${elem.statements}", elem.kind))
-    case elem => Left(s"Expected int, received ${elem.kind}")
+  // factor -> ("-" | "!") element | element
+  def factor = ( ( "-" | "!" ) ~ element ) ^^? { case op ~ value =>
+    value.convert(op) match {
+      case Some(output) => Right(output)
+      case None => Left(applicationKindError(op, value))
+    }
   } | element
 
   // element -> constant | boolConstant | string | variable | "(" exp ")"
@@ -111,7 +150,7 @@ object SimpleParser extends RegexParsers {
 
 object Driver {
   def main(args: Array[String]):Unit = {
-    val example = "x = 12; y = 42; print x+y;"
+    val example = "int x = 12; int y = 42; print x+y;"
     val result = SimpleParser.parseAll(SimpleParser.program, new InputStreamReader(System.in)) match {
       case SimpleParser.Success(matched, reader) => println(matched); 0
       case SimpleParser.Failure(msg, _) => System.err.println(s"FAILURE: $msg"); 1
