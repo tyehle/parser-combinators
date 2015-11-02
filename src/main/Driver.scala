@@ -115,7 +115,7 @@ object SimpleParser extends RegexParsers {
   } | arithExp
 
   // arithExp -> term ("+" | "-") arithExp | term
-  def arithExp:Parser[Output] = ( term ~ ("+" | "-") ~ exp ) ^^? { case left ~ op ~ right =>
+  def arithExp:Parser[Output] = ( term ~ ("+" | "-") ~ arithExp ) ^^? { case left ~ op ~ right =>
     left.combine(right, op) match {
       case Some(output) => Right(output)
       case None => Left(applicationKindError(op, left, right))
