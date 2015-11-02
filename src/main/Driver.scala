@@ -46,6 +46,7 @@ object SimpleParser extends RegexParsers {
   }
 
   def constant:Parser[String] = """\d+""".r ^^ { _.toString }
+  def boolConstant: Parser[String] = "true" ^^^ "[true]" | "false" ^^^ "[false]"
   def variable:Parser[String] = """[a-zA-Z]+""".r ^^ { _.toString }
   def string = ( "\"" ~> "[a-zA-Z0-9]*".r <~ "\"" ) ^^ { chars => "["+chars+"]"}
   def kind = """int|string|boolean""".r ^^ { _.toString }
@@ -54,7 +55,7 @@ object SimpleParser extends RegexParsers {
   // program -> statement *
   def program = rep(statement) ^^ { _.mkString }
 
-  // statement -> type variable "=" exp ";" | variable "=" exp ";" | "print" exp ";"
+  // statement -> type variable "=" exp ";" | variable "=" exp ";" | "print" exp ";" | "newline" ";"
   def statement =
     ( kind ~ variable ~ ( "=" ~> exp <~ ";" ) ) ^^? { case varKind ~ name ~ value =>
       lookup(name) match {
@@ -64,13 +65,13 @@ object SimpleParser extends RegexParsers {
           case None => Left("Too many variables")
         }
       }
-    } | ( variable ~ ("" ~> exp <~ ";") ) ^^? { case name ~ Output(value, expKind) =>
+    } | ( variable ~ ( "=" ~> exp <~ ";" ) ) ^^? { case name ~ Output(value, expKind) =>
       lookup(name) match {
         case Some((reg, regKind)) if regKind == expKind => Right(s"$value s$reg\n")
         case Some((reg, regKind)) => Left(s"Expected $regKind, received $expKind")
         case None => Left(s"Unknown variable $variable")
       }
-    } | ( "print" ~> exp <~ ";" ) ^^ { case Output(value, _) => s"$value n \n" }
+    } | ( "print" ~> exp <~ ";" ) ^^ { case Output(value, _) => s"$value n \n" } | ("newline" ~ ";") ^^^ "\n"
 
   // exp -> term ("+" | "-") exp | term
   def exp:Parser[Output] = ( term ~ ("+" | "-") ~ exp ) ^^? {
@@ -98,9 +99,9 @@ object SimpleParser extends RegexParsers {
     case elem => Left(s"Expected int, received ${elem.kind}")
   } | element
 
-  // element -> constant | string | variable | "(" exp ")"
+  // element -> constant | boolConstant | string | variable | "(" exp ")"
   def element =
-    constant ^^ {Output(_, "int")} | string ^^ {Output(_, "string")} |
+    constant ^^ {Output(_, "int")} | boolConstant ^^ {Output(_, "boolean")} | string ^^ {Output(_, "string")} |
     variable ^^? { name => lookup(name) match {
       case Some((reg, kind)) => Right(Output(s"l$reg", kind))
       case None => Left(s"Undefined variable $name")
