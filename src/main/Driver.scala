@@ -84,9 +84,16 @@ object SimpleParser extends RegexParsers {
   // program -> statement *
   def program = rep(statement) ^^ { _.mkString }
 
-  // statement -> type variable "=" exp ";" | variable "=" exp ";" | "print" exp ";" | "newline" ";"
-  def statement =
-    ( kind ~ variable ~ ( "=" ~> exp <~ ";" ) ) ^^? { case varKind ~ name ~ value =>
+  // statement -> "if" "(" exp ")" "{" program "}" "else" "{" program "}"
+  //           |  type variable "=" exp ";"
+  //           | variable "=" exp ";"
+  //           | "print" exp ";"
+  //           | "newline" ";"
+  def statement:Parser[String] =
+    ( ( "if" ~> "(" ~> exp <~ ")" ) ~ ( "{" ~> program <~ "}" ) ~ ("else" ~> "{" ~> program <~ "}") ) ^^? {
+      case Output(test, "boolean") ~ ifTrue ~ ifFalse => Right(s"$test St lt 1 [\n$ifTrue] sp =p Lt 0 [\n$ifFalse] sp =p\n")
+      case testExp ~ ifTrue ~ ifFalse => Left(applicationKindError("if", testExp))
+    } | ( kind ~ variable ~ ( "=" ~> exp <~ ";" ) ) ^^? { case varKind ~ name ~ value =>
       lookup(name) match {
         case Some(reg) => Left(s"Variable $name is already defined")
         case None if varKind != value.kind => Left(s"Expected $varKind, received ${value.kind}")
