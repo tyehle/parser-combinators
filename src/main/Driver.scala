@@ -77,40 +77,46 @@ object SimpleParser extends RegexParsers {
   def constant:Parser[String] = """\d+""".r ^^ { _.toString }
   def boolConstant: Parser[String] = "true" ^^^ "1" | "false" ^^^ "0"
   def variable:Parser[String] = """[a-zA-Z]+""".r ^^ { _.toString }
-  def string = ( "\"" ~> "[a-zA-Z0-9]*".r <~ "\"" ) ^^ { chars => "["+chars+"]"}
+  def string = ( "\"" ~> "[a-zA-Z0-9 ]*".r <~ "\"" ) ^^ { chars => "["+chars+"]"}
   def kind = """int|string|boolean""".r ^^ { _.toString }
 
 
   // program -> statement *
-  def program = rep(statement) ^^ { _.mkString }
+  def program = rep(topStmt) ^^ { _.mkString("\n") }
 
-  // statement -> "if" "(" exp ")" "{" program "}" "else" "{" program "}"
-  //           |  type variable "=" exp ";"
-  //           | variable "=" exp ";"
-  //           | "print" exp ";"
-  //           | "newline" ";"
-  def statement:Parser[String] =
-    ( ( "if" ~> "(" ~> exp <~ ")" ) ~ ( "{" ~> program <~ "}" ) ~ ("else" ~> "{" ~> program <~ "}") ) ^^? {
-      case Output(test, "boolean") ~ ifTrue ~ ifFalse => Right(s"$test St lt 1 [\n$ifTrue] sp =p Lt 0 [\n$ifFalse] sp =p\n")
-      case testExp ~ ifTrue ~ ifFalse => Left(applicationKindError("if", testExp))
-    } | ( kind ~ variable ~ ( "=" ~> exp <~ ";" ) ) ^^? { case varKind ~ name ~ value =>
+  def ifProgram = rep(statement) ^^ { _.mkString(" ") }
+
+  // topStmt -> type variable "=" exp ";"
+  //         |  statement
+  def topStmt: Parser[String] =
+    ( kind ~ variable ~ ( "=" ~> exp <~ ";" ) ) ^^? { case varKind ~ name ~ value =>
       lookup(name) match {
         case Some(reg) => Left(s"Variable $name is already defined")
         case None if varKind != value.kind => Left(s"Expected $varKind, received ${value.kind}")
         case None => allocate(name, varKind) match {
-          case Some(reg) => Right(s"${value.statements} s$reg\n")
+          case Some(reg) => Right(s"${value.statements} s$reg")
           case None => Left("Too many variables")
         }
       }
+    } | statement
+
+  // statement -> "if" "(" exp ")" "{" program "}" "else" "{" program "}"
+  //           |  variable "=" exp ";"
+  //           |  "print" exp ";"
+  //           |  "newline" ";"
+  def statement:Parser[String] =
+    ( ( "if" ~> "(" ~> exp <~ ")" ) ~ ( "{" ~> ifProgram <~ "}" ) ~ ("else" ~> "{" ~> ifProgram <~ "}") ) ^^? {
+      case Output(test, "boolean") ~ ifTrue ~ ifFalse => Right(s"$test St lt 1 [$ifTrue] sp =p Lt 0 [$ifFalse] sp =p")
+      case testExp ~ ifTrue ~ ifFalse => Left(applicationKindError("if", testExp))
     } | ( variable ~ ( "=" ~> exp <~ ";" ) ) ^^? { case name ~ Output(value, expKind) =>
       lookup(name) match {
-        case Some((reg, regKind)) if regKind == expKind => Right(s"$value s$reg\n")
+        case Some((reg, regKind)) if regKind == expKind => Right(s"$value s$reg")
         case Some((reg, regKind)) => Left(s"Expected $regKind, received $expKind")
         case None => Left(s"Unknown variable $variable")
       }
     } | ( "print" ~> exp <~ ";" ) ^^ {
-      case Output(value, "boolean") => s"$value [false] r 1 [st [true]] st =t n\n"
-      case Output(value, _) => s"$value n \n"
+      case Output(value, "boolean") => s"$value [false] r 1 [st [true]] st =t n"
+      case Output(value, _) => s"$value n"
     } | ("newline" ~ ";") ^^^ "\n"
 
   // exp -> arithExp (">" | "<" | "==") exp | arithExp
