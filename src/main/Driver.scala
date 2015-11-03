@@ -117,7 +117,7 @@ object SimpleParser extends RegexParsers {
     } | ( "print" ~> exp <~ ";" ) ^^ {
       case Output(value, "boolean") => s"$value [false] r 1 [st [true]] st =t n"
       case Output(value, _) => s"$value n"
-    } | ("newline" ~ ";") ^^^ "\n"
+    } | ("newline" ~ ";") ^^^ "[\n]"
 
   // exp -> arithExp (">" | "<" | "==") exp | arithExp
   def exp:Parser[Output] = ( arithExp ~ (">" | "<" | "==") ~ exp ) ^^? { case left ~ op ~ right =>
